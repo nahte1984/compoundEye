@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v3.2</title>
+    <title>compoundEye | v3.3</title>
     <style>
         body, html {
             margin: 0;
@@ -212,13 +212,25 @@
 
         startBtn.addEventListener('click', async () => {
             try {
-                // 修改為使用前置鏡頭 (user)
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
                 video.srcObject = stream;
                 video.play();
                 uiLayer.style.opacity = '0';
                 setTimeout(() => { uiLayer.style.display = 'none'; }, 500);
-                video.addEventListener('loadeddata', () => { requestAnimationFrame(drawLoop); });
+                
+                video.addEventListener('loadeddata', () => { 
+                    // 在影片載入後，直接觸發第一次變形
+                    prevState = 0;
+                    targetState = 1;
+                    prevGridScale = 1;
+                    
+                    let areaScale = 0.5 + Math.random() * 11.5;
+                    targetGridScale = Math.sqrt(areaScale);
+                    
+                    animProgress = 0; // 重置進度以觸發 Easing
+                    
+                    requestAnimationFrame(drawLoop); 
+                });
             } catch (err) {
                 console.error("相機存取錯誤:", err);
                 startBtn.style.display = 'none';
@@ -293,23 +305,35 @@
                 let vx = idealVx + baseOffX * currentGridScale;
                 let vy = idealVy + baseOffY * currentGridScale;
                 maxDistX = Math.max(maxDistX, Math.abs(vx - cx)); maxDistY = Math.max(maxDistY, Math.abs(vy - cy));
+                
                 let dx = vx - cx; let dy = vy - cy;
                 let dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist > 0) { vx += (dx / dist) * 1.0; }
+                if (dist > 0) { 
+                    // 修正：同時對 X 軸與 Y 軸進行 1.5px 的外擴
+                    vx += (dx / dist) * 1.5; 
+                    vy += (dy / dist) * 1.5; 
+                }
+                
                 if (i === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy);
             }
             ctx.closePath(); ctx.clip(); ctx.translate(cx, cy);
+            
             const prevContent = getCellContent(col, row, prevState);
             const targetContent = getCellContent(col, row, targetState);
             const currentScale = prevContent.scale + (targetContent.scale - prevContent.scale) * t;
             const currentRx = prevContent.rx + (targetContent.rx - prevContent.rx) * t;
             const currentRy = prevContent.ry + (targetContent.ry - prevContent.ry) * t;
-            const destW = Math.max(S_current * 2.0, maxDistX * 2.2);
-            const destH = Math.max(H_current * 2.0, maxDistY * 2.2);
+            
+            // 修正：加上 3px 的 padding (每邊 1.5px) 以覆蓋擴張後的影像範圍
+            const padding = 3;
+            const destW = Math.max(S_current * 2.0, maxDistX * 2.2) + padding;
+            const destH = Math.max(H_current * 2.0, maxDistY * 2.2) + padding;
             const videoRatio = destW / destH;
+            
             let maxSourceWidth = video.videoWidth;
             let maxSourceHeight = maxSourceWidth / videoRatio;
             if (maxSourceHeight > video.videoHeight) { maxSourceHeight = video.videoHeight; maxSourceWidth = maxSourceHeight * videoRatio; }
+            
             ctx.drawImage(video, currentRx * (video.videoWidth - maxSourceWidth / currentScale), currentRy * (video.videoHeight - maxSourceHeight / currentScale), maxSourceWidth / currentScale, maxSourceHeight / currentScale, -destW/2, -destH/2, destW, destH);
             if (flashManager.active && flashManager.active.col === col && flashManager.active.row === row && flashManager.active.isOn) {
                 ctx.fillStyle = '#ffffff'; ctx.fillRect(-destW/2, -destH/2, destW, destH);
