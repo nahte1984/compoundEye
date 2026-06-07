@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEYE | v1.1</title>
+    <title>compoundEye | v1.2</title>
     <style>
         body, html {
             margin: 0;
@@ -116,8 +116,8 @@
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
 
-            // 響應式：手機版 (寬度小於 768px) 六邊形縮小到 25% (R = 25)
-            R = window.innerWidth < 768 ? 25 : 100;
+            // 響應式：手機版 (寬度小於 768px) 六邊形縮小到 50% (R = 50)
+            R = window.innerWidth < 768 ? 50 : 100;
             W = 2 * R;
             H = Math.sqrt(3) * R;
             xOffset = 1.5 * R;
@@ -126,25 +126,54 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // 取得每個頂點的隨機偏移量，確保共用頂點的相鄰六邊形無縫連接
+        // 取得每個頂點的隨機偏移量，加入「力場推擠」製造極端巨大的六邊形
         function getVertexOffset(idX, idY, state) {
             if (state === 0) return { x: 0, y: 0 };
             
             // 利用座標與狀態產生隨機種子
             function hash(seedX, seedY, s, comp) {
-                // 使用不同的常數來產生獨立的雜湊值
                 let h = Math.sin(seedX * 12.9898 + seedY * 78.233 + s * 37.719 + comp * 19.51) * 43758.5453;
                 return h - Math.floor(h);
             }
             
-            // 為了達到最大與最小面積相差 6 倍的反差，將偏移極限提升至 0.42 * R。
-            // (最巨型半徑約 1.42R，最微型半徑約 0.58R，面積比 1.42^2 / 0.58^2 ≈ 5.99 倍)
-            // 這將創造非常激烈的變形效果，並維持無縫拼接。
-            const maxOffset = R * 0.42; 
+            // 1. 基礎的局部碎裂變形 (保留有機感)
+            const baseMaxOffset = R * 0.4; 
             let rx = hash(idX, idY, state, 1) * 2 - 1;
             let ry = hash(idX, idY, state, 2) * 2 - 1;
+            let baseX = rx * baseMaxOffset;
+            let baseY = ry * baseMaxOffset;
+
+            // 2. 超巨大力場排斥 (Focal Push) - 製造巨大的視覺張力
+            let giantX = 0;
+            let giantY = 0;
+
+            // 力場 1：超級巨大的主要張力點 (製造超過畫面一半的六邊形)
+            let f1x = hash(1, 1, state, 10) * window.innerWidth;
+            let f1y = hash(1, 1, state, 11) * window.innerHeight;
+            let d1 = Math.hypot(idX - f1x, idY - f1y) + 0.001; // 避免除以零
             
-            return { x: rx * maxOffset, y: ry * maxOffset };
+            // 最大推擠距離設定為螢幕長邊的 60%，強制拉扯中心點的網格
+            let maxPush1 = Math.max(window.innerWidth, window.innerHeight) * 0.6; 
+            let pushRadius1 = maxPush1 * 1.5; 
+            
+            // 使用二次方衰減曲線，距離力場中心越近，向外的推力越強大
+            let pushFactor1 = Math.pow(Math.max(0, 1 - d1 / pushRadius1), 2);
+            giantX += ((idX - f1x) / d1) * maxPush1 * pushFactor1;
+            giantY += ((idY - f1y) / d1) * maxPush1 * pushFactor1;
+
+            // 力場 2：次要的張力點，增加不對稱與被擠壓的星狀碎裂感
+            let f2x = hash(2, 2, state, 12) * window.innerWidth;
+            let f2y = hash(2, 2, state, 13) * window.innerHeight;
+            let d2 = Math.hypot(idX - f2x, idY - f2y) + 0.001;
+            let maxPush2 = Math.max(window.innerWidth, window.innerHeight) * 0.3;
+            let pushRadius2 = maxPush2 * 1.5;
+            let pushFactor2 = Math.pow(Math.max(0, 1 - d2 / pushRadius2), 2);
+            
+            giantX += ((idX - f2x) / d2) * maxPush2 * pushFactor2;
+            giantY += ((idY - f2y) / d2) * maxPush2 * pushFactor2;
+            
+            // 解除內角不可大於 180 度的限制：允許頂點大範圍交錯、重疊與翻轉
+            return { x: baseX + giantX, y: baseY + giantY };
         }
 
         // 取得每個格子的內容屬性 (縮放倍率、取樣位置X比例、取樣位置Y比例)
@@ -217,16 +246,19 @@
             // 清空畫布
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 計算當前畫面可見的網格行列範圍 (移除全域偏移)
-            const startCol = Math.floor((-W) / xOffset) - 1;
-            const endCol = Math.floor((canvas.width + W) / xOffset) + 1;
-            const startRow = Math.floor((-H) / yOffset) - 2;
-            const endRow = Math.floor((canvas.height + H) / yOffset) + 2;
+            // 因為力場推擠的範圍可能超過 800px，我們必須大幅擴張「可見網格範圍」，否則畫面邊緣會破圖
+            let maxTotalPush = Math.max(window.innerWidth, window.innerHeight) * 0.9;
+            let padCols = Math.ceil(maxTotalPush / xOffset) + 1;
+            let padRows = Math.ceil(maxTotalPush / yOffset) + 1;
+
+            const startCol = Math.floor((-W) / xOffset) - padCols;
+            const endCol = Math.floor((canvas.width + W) / xOffset) + padCols;
+            const startRow = Math.floor((-H) / yOffset) - padRows;
+            const endRow = Math.floor((canvas.height + H) / yOffset) + padRows;
 
             // 繪製每一個可見的六邊形
             for (let col = startCol; col <= endCol; col++) {
                 for (let row = startRow; row <= endRow; row++) {
-                    // 繪製單個格子的內容，傳入動畫進度 t
                     drawCell(col, row, t);
                 }
             }
@@ -240,6 +272,9 @@
             const cy_actual = row * yOffset + (isOddCol ? H / 2 : 0);
 
             ctx.save();
+
+            let maxDistX = 0;
+            let maxDistY = 0;
 
             // 1. 繪製變形六邊形路徑並設定為剪裁範圍
             ctx.beginPath();
@@ -259,16 +294,20 @@
                 const currentOffX = prevOff.x + (targetOff.x - prevOff.x) * t;
                 const currentOffY = prevOff.y + (targetOff.y - prevOff.y) * t;
                 
-                // 計算最終頂點實際座標 (移除全域偏移)
+                // 計算最終頂點實際座標
                 let vx = idealVx + currentOffX;
                 let vy = idealVy + currentOffY;
+
+                // 記錄頂點偏離網格中心的極端距離，用來計算影像需要的裁切範圍
+                maxDistX = Math.max(maxDistX, Math.abs(vx - cx_actual));
+                maxDistY = Math.max(maxDistY, Math.abs(vy - cy_actual));
 
                 // 修正 sub-pixel 產生的細線：將頂點沿著法向量向外微幅擴張 (Overlap)
                 let dx = vx - cx_actual;
                 let dy = vy - cy_actual;
                 let dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > 0) {
-                    vx += (dx / dist) * 1.0; // 擴張 1.0 像素，確保相鄰形狀微小重疊覆蓋鋸齒縫隙
+                    vx += (dx / dist) * 1.0; 
                 }
 
                 if (i === 0) ctx.moveTo(vx, vy);
@@ -290,9 +329,10 @@
             const currentRy = prevContent.ry + (targetContent.ry - prevContent.ry) * t;
 
             // 2. 計算影片來源裁切尺寸 
-            // 由於變形後範圍變大，將繪製目標區域擴大 1.8 倍以確保影像填滿不規則的邊緣
-            const destW = W * 1.8;
-            const destH = H * 1.8;
+            // 動態根據頂點被拉扯的極端距離 (maxDistX/Y) 來放大影像繪製範圍
+            // 這樣超級巨大的六邊形內部影像才不會出現被切斷的空白邊緣
+            const destW = Math.max(W * 1.8, maxDistX * 2.2);
+            const destH = Math.max(H * 1.8, maxDistY * 2.2);
             const videoRatio = destW / destH;
             
             let maxSourceWidth = video.videoWidth;
@@ -307,7 +347,7 @@
             const sw = maxSourceWidth / currentScale;
             const sh = maxSourceHeight / currentScale;
 
-            // 根據動態補間的取樣比例，決定左上角的裁切起點 (確保裁切框不會超出影片本體)
+            // 根據動態補間的取樣比例，決定左上角的裁切起點
             const sx = currentRx * (video.videoWidth - sw);
             const sy = currentRy * (video.videoHeight - sh);
 
