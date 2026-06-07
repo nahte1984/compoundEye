@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v4.1</title>
+    <title>compoundEye | v4.5</title>
     <style>
         body, html {
             margin: 0;
@@ -32,17 +32,27 @@
 
         #start-btn {
             font-size: 18px;
+            font-weight: bold;
             padding: 20px 40px;
             border-radius: 50px;
             border: 1px solid #e0e0e0;
             background-color: #ffffff;
-            color: #333;
             cursor: pointer;
             box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
             transition: transform 0.1s, box-shadow 0.1s;
             display: flex;
             align-items: center;
             justify-content: center;
+            animation: rainbowText 3s linear infinite;
+        }
+
+        @keyframes rainbowText {
+            0% { color: hsl(0, 100%, 50%); }
+            20% { color: hsl(72, 100%, 50%); }
+            40% { color: hsl(144, 100%, 50%); }
+            60% { color: hsl(216, 100%, 50%); }
+            80% { color: hsl(288, 100%, 50%); }
+            100% { color: hsl(360, 100%, 50%); }
         }
 
         #start-btn:active {
@@ -101,6 +111,7 @@
         let currentGridScale = 1;
 
         let baseS = 180;
+        const initialHueOffset = Math.random() * 360;
 
         const flashManager = {
             queue: [],
@@ -215,8 +226,8 @@
                 let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
                 return h - Math.floor(h);
             }
-            let baseHue = (state * 30) % 360; 
-            let hue = baseHue + hash(col, row, state, 4) * 30; 
+            let baseHue = (initialHueOffset + state * 35) % 360; 
+            let hue = baseHue + hash(col, row, state, 4) * 35; 
             let sat = 80 + hash(col, row, state, 5) * 20; 
             return { hue, sat };
         }
