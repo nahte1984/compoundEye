@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v3.1</title>
+    <title>compoundEye | v3.2</title>
     <style>
         body, html {
             margin: 0;
@@ -212,7 +212,8 @@
 
         startBtn.addEventListener('click', async () => {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+                // 修改為使用前置鏡頭 (user)
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
                 video.srcObject = stream;
                 video.play();
                 uiLayer.style.opacity = '0';
@@ -230,7 +231,6 @@
             targetState++;
             prevGridScale = targetGridScale;
             
-            // 移除限制：隨機倍率 0.5 ~ 12，不強制檢查差異
             let areaScale = 0.5 + Math.random() * 11.5;
             targetGridScale = Math.sqrt(areaScale);
             
