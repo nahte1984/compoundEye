@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v3.3.1</title>
+    <title>compoundEye | v3.4</title>
     <style>
         body, html {
             margin: 0;
@@ -210,6 +210,21 @@
             };
         }
 
+        // 新增：取得指定狀態的顏色 (色相推移與隨機範圍)
+        function getCellColor(col, row, state) {
+            function hash(c, r, s, comp) {
+                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
+                return h - Math.floor(h);
+            }
+            // 每次 state 增加，基礎色相推移 30 度
+            let baseHue = state * 30; 
+            // 在該基礎色相上，加上 0~30 度的隨機偏移
+            let hue = baseHue + hash(col, row, state, 4) * 30; 
+            // 彩度介於 80% ~ 100%
+            let sat = 80 + hash(col, row, state, 5) * 20; 
+            return { hue, sat };
+        }
+
         startBtn.addEventListener('click', async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
@@ -219,7 +234,6 @@
                 setTimeout(() => { uiLayer.style.display = 'none'; }, 500);
                 
                 video.addEventListener('loadeddata', () => { 
-                    // 在影片載入後，直接觸發第一次變形
                     prevState = 0;
                     targetState = 1;
                     prevGridScale = 1;
@@ -227,7 +241,7 @@
                     let areaScale = 0.5 + Math.random() * 11.5;
                     targetGridScale = Math.sqrt(areaScale);
                     
-                    animProgress = 0; // 重置進度以觸發 Easing
+                    animProgress = 0;
                     
                     requestAnimationFrame(drawLoop); 
                 });
@@ -264,7 +278,11 @@
             currentGridScale = prevGridScale + (targetGridScale - prevGridScale) * t;
             let S_current = baseS * currentGridScale;
             let H_current = S_current * Math.sqrt(3) / 2;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 使用黑色清空畫布，避免 multiply 疊加異常
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
             const colStep = S_current * 0.5;
             const startCol = Math.floor(-S_current / colStep) - 2;
             const endCol = Math.ceil((canvas.width + S_current) / colStep) + 2;
@@ -309,14 +327,27 @@
                 let dx = vx - cx; let dy = vy - cy;
                 let dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > 0) { 
-                    // 修正：同時對 X 軸與 Y 軸進行 1.5px 的外擴
                     vx += (dx / dist) * 1.5; 
                     vy += (dy / dist) * 1.5; 
                 }
                 
                 if (i === 0) ctx.moveTo(vx, vy); else ctx.lineTo(vx, vy);
             }
-            ctx.closePath(); ctx.clip(); ctx.translate(cx, cy);
+            ctx.closePath(); 
+            
+            // --- 新增：顏色 Easing 與填色 ---
+            const prevColor = getCellColor(col, row, prevState);
+            const targetColor = getCellColor(col, row, targetState);
+            const currentHue = prevColor.hue + (targetColor.hue - prevColor.hue) * t;
+            const currentSat = prevColor.sat + (targetColor.sat - prevColor.sat) * t;
+            
+            // HSL 系統中 Lightness 設定為 50% 等同於 HSB 中最亮最純的顏色 (100% 明度)
+            ctx.fillStyle = `hsl(${currentHue}, ${currentSat}%, 50%)`;
+            ctx.fill();
+            
+            // 裁切並轉換座標空間以繪製影片
+            ctx.clip(); 
+            ctx.translate(cx, cy);
             
             const prevContent = getCellContent(col, row, prevState);
             const targetContent = getCellContent(col, row, targetState);
@@ -324,7 +355,6 @@
             const currentRx = prevContent.rx + (targetContent.rx - prevContent.rx) * t;
             const currentRy = prevContent.ry + (targetContent.ry - prevContent.ry) * t;
             
-            // 修正：加上 3px 的 padding (每邊 1.5px) 以覆蓋擴張後的影像範圍
             const padding = 3;
             const destW = Math.max(S_current * 2.0, maxDistX * 2.2) + padding;
             const destH = Math.max(H_current * 2.0, maxDistY * 2.2) + padding;
@@ -334,7 +364,16 @@
             let maxSourceHeight = maxSourceWidth / videoRatio;
             if (maxSourceHeight > video.videoHeight) { maxSourceHeight = video.videoHeight; maxSourceWidth = maxSourceHeight * videoRatio; }
             
+            // --- 新增：灰階濾鏡與相乘疊加模式 ---
+            ctx.globalCompositeOperation = 'multiply';
+            ctx.filter = 'grayscale(100%)';
+
             ctx.drawImage(video, currentRx * (video.videoWidth - maxSourceWidth / currentScale), currentRy * (video.videoHeight - maxSourceHeight / currentScale), maxSourceWidth / currentScale, maxSourceHeight / currentScale, -destW/2, -destH/2, destW, destH);
+            
+            // 繪製完畢後重置，以免影響到閃光效果
+            ctx.filter = 'none';
+            ctx.globalCompositeOperation = 'source-over';
+
             if (flashManager.active && flashManager.active.col === col && flashManager.active.row === row && flashManager.active.isOn) {
                 ctx.fillStyle = '#ffffff'; ctx.fillRect(-destW/2, -destH/2, destW, destH);
             }
