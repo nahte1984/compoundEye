@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>鏡頭無縫拼貼互動</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #ffffff;
+            overflow: hidden;
+            font-family: sans-serif;
+            touch-action: none; /* 防止移動端預設滑動行為 */
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            background-color: #ffffff;
+            transition: opacity 0.5s ease;
+        }
+
+        #start-btn {
+            font-size: 18px;
+            padding: 20px 40px;
+            border-radius: 50px;
+            border: 1px solid #e0e0e0;
+            background-color: #ffffff;
+            color: #333;
+            cursor: pointer;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+            transition: transform 0.1s, box-shadow 0.1s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #start-btn:active {
+            transform: scale(0.95);
+            box-shadow: 0 5px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        #error-msg {
+            display: none;
+            color: #ff4d4f;
+            text-align: center;
+            padding: 20px;
+            background: #fff0f0;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        video {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <button id="start-btn">👀</button>
+        <div id="error-msg">無法取得相機權限，請確認已允許存取。</div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <video id="video" autoplay playsinline muted></video>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const uiLayer = document.getElementById('ui-layer');
+        const errorMsg = document.getElementById('error-msg');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('video');
+
+        // 網格偏移量與動畫狀態
+        let currentGridOffsetX = 0;
+        let currentGridOffsetY = 0;
+        let prevGridOffsetX = 0;
+        let prevGridOffsetY = 0;
+        let targetGridOffsetX = 0;
+        let targetGridOffsetY = 0;
+
+        let animProgress = 1;
+        let prevState = 0;
+        let targetState = 0;
+
+        // 正六邊形設定 (確保無縫鋪滿)
+        // 寬度大約 200px -> 半徑 100px (平頂六邊形 Width = 2 * R)
+        const R = 100; 
+        const W = 2 * R; // 200
+        const H = Math.sqrt(3) * R; // 約 173.2
+
+        // 網格間距
+        const xOffset = 1.5 * R;
+        const yOffset = H;
+
+        // Easing 函數 (easeInOutCubic) 讓動畫平滑
+        function easeInOutCubic(x) {
+            return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+        }
+
+        // 初始化 Canvas 大小
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 取得每個頂點的隨機偏移量，確保共用頂點的相鄰六邊形無縫連接
+        function getVertexOffset(idX, idY, state) {
+            if (state === 0) return { x: 0, y: 0 };
+            
+            // 利用座標與狀態產生隨機種子
+            function hash(seedX, seedY, s, comp) {
+                let h = Math.sin(seedX * 12.9898 + seedY * 78.233 + s * 37.719 + comp * 19.51) * 43758.5453;
+                return h - Math.floor(h);
+            }
+            
+            // 為了確保不規則六邊形的所有內角都不會大於180度（保持嚴格的凸多邊形），
+            // 我們必須限制頂點的隨機偏移半徑。對正六邊形而言，偏移量設定為半徑的 25% (0.25)
+            // 可以從幾何學上絕對保證邊線不會反摺交錯，且所有內角皆小於等於 180 度。
+            const maxOffset = R * 0.25; 
+            let rx = hash(idX, idY, state, 1) * 2 - 1;
+            let ry = hash(idX, idY, state, 2) * 2 - 1;
+            
+            return { x: rx * maxOffset, y: ry * maxOffset };
+        }
+
+        // 取得每個格子的內容屬性 (縮放倍率、取樣位置X比例、取樣位置Y比例)
+        function getCellContent(col, row, state) {
+            function hash(c, r, s, comp) {
+                // 使用不同的常數來產生獨立的雜湊值
+                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
+                return h - Math.floor(h);
+            }
+            
+            return {
+                scale: 1 + hash(col, row, state, 1) * 6, // 縮放 1 ~ 7倍
+                rx: hash(col, row, state, 2),          // X軸取樣起點 0 ~ 1 比例
+                ry: hash(col, row, state, 3)           // Y軸取樣起點 0 ~ 1 比例
+            };
+        }
+
+        // 啟動相機
+        startBtn.addEventListener('click', async () => {
+            try {
+                // 請求後鏡頭 (environment)
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: "environment" } }
+                });
+                
+                video.srcObject = stream;
+                video.play();
+
+                // 隱藏 UI，開始繪製
+                uiLayer.style.opacity = '0';
+                setTimeout(() => { uiLayer.style.display = 'none'; }, 500);
+
+                // 當影像資料足夠時開始動畫迴圈
+                video.addEventListener('loadeddata', () => {
+                    requestAnimationFrame(drawLoop);
+                });
+
+            } catch (err) {
+                console.error("相機存取錯誤:", err);
+                startBtn.style.display = 'none';
+                errorMsg.style.display = 'block';
+            }
+        });
+
+        // 點擊畫面任意處隨機偏移網格，並增加狀態以改變頂點形狀
+        canvas.addEventListener('click', () => {
+            prevState = targetState;
+            targetState++;
+            
+            prevGridOffsetX = currentGridOffsetX;
+            prevGridOffsetY = currentGridOffsetY;
+            
+            // 隨機偏移整面網格
+            targetGridOffsetX = prevGridOffsetX + (Math.random() - 0.5) * 1000;
+            targetGridOffsetY = prevGridOffsetY + (Math.random() - 0.5) * 1000;
+            
+            animProgress = 0; // 重置動畫進度，觸發 easing
+        });
+
+        // 主要繪圖迴圈
+        function drawLoop() {
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+                requestAnimationFrame(drawLoop);
+                return;
+            }
+
+            // 更新動畫進度
+            if (animProgress < 1) {
+                animProgress += 0.02; // 控制動畫速度
+                if (animProgress > 1) animProgress = 1;
+            }
+            
+            let t = easeInOutCubic(animProgress);
+            currentGridOffsetX = prevGridOffsetX + (targetGridOffsetX - prevGridOffsetX) * t;
+            currentGridOffsetY = prevGridOffsetY + (targetGridOffsetY - prevGridOffsetY) * t;
+
+            // 清空畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 計算當前畫面可見的網格行列範圍 (加寬範圍以涵蓋變形與移動後的網格邊緣)
+            const startCol = Math.floor((-currentGridOffsetX - W) / xOffset) - 1;
+            const endCol = Math.floor((canvas.width - currentGridOffsetX + W) / xOffset) + 1;
+            const startRow = Math.floor((-currentGridOffsetY - H) / yOffset) - 2;
+            const endRow = Math.floor((canvas.height - currentGridOffsetY + H) / yOffset) + 2;
+
+            // 繪製每一個可見的六邊形
+            for (let col = startCol; col <= endCol; col++) {
+                for (let row = startRow; row <= endRow; row++) {
+                    // 繪製單個格子的內容，傳入動畫進度 t
+                    drawCell(col, row, t);
+                }
+            }
+
+            requestAnimationFrame(drawLoop);
+        }
+
+        function drawCell(col, row, t) {
+            const isOddCol = Math.abs(col % 2) === 1;
+            const cx_actual = col * xOffset + currentGridOffsetX;
+            const cy_actual = row * yOffset + (isOddCol ? H / 2 : 0) + currentGridOffsetY;
+
+            ctx.save();
+
+            // 1. 繪製變形六邊形路徑並設定為剪裁範圍
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = i * Math.PI / 3; 
+                // 網格理想基準座標 (未包含整體偏移)
+                const idealVx = col * xOffset + R * Math.cos(angle);
+                const idealVy = row * yOffset + (isOddCol ? H / 2 : 0) + R * Math.sin(angle);
+                
+                // 利用四捨五入取得該頂點的唯一 ID (確保相鄰六邊形的共用頂點 ID 相同)
+                const idX = Math.round(idealVx);
+                const idY = Math.round(idealVy);
+                
+                // 取得前後狀態的頂點偏移量並進行 Interpolation (補間)
+                const prevOff = getVertexOffset(idX, idY, prevState);
+                const targetOff = getVertexOffset(idX, idY, targetState);
+                const currentOffX = prevOff.x + (targetOff.x - prevOff.x) * t;
+                const currentOffY = prevOff.y + (targetOff.y - prevOff.y) * t;
+                
+                // 計算最終頂點實際座標
+                let vx = idealVx + currentGridOffsetX + currentOffX;
+                let vy = idealVy + currentGridOffsetY + currentOffY;
+
+                // 修正 sub-pixel 產生的細線：將頂點沿著法向量向外微幅擴張 (Overlap)
+                let dx = vx - cx_actual;
+                let dy = vy - cy_actual;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                    vx += (dx / dist) * 1.0; // 擴張 1.0 像素，確保相鄰形狀微小重疊覆蓋鋸齒縫隙
+                }
+
+                if (i === 0) ctx.moveTo(vx, vy);
+                else ctx.lineTo(vx, vy);
+            }
+            ctx.closePath();
+            ctx.clip(); 
+
+            // 移動畫布中心到此格，以便繪製影像
+            ctx.translate(cx_actual, cy_actual);
+
+            // 取得前後狀態的內容參數並進行 Interpolation (補間)
+            const prevContent = getCellContent(col, row, prevState);
+            const targetContent = getCellContent(col, row, targetState);
+            
+            // 將畫面的 縮放 以及 裁切座標 進行平滑的 Easing 動畫運算
+            const currentScale = prevContent.scale + (targetContent.scale - prevContent.scale) * t;
+            const currentRx = prevContent.rx + (targetContent.rx - prevContent.rx) * t;
+            const currentRy = prevContent.ry + (targetContent.ry - prevContent.ry) * t;
+
+            // 2. 計算影片來源裁切尺寸 
+            // 由於變形後範圍變大，將繪製目標區域擴大 1.8 倍以確保影像填滿不規則的邊緣
+            const destW = W * 1.8;
+            const destH = H * 1.8;
+            const videoRatio = destW / destH;
+            
+            let maxSourceWidth = video.videoWidth;
+            let maxSourceHeight = maxSourceWidth / videoRatio;
+
+            if (maxSourceHeight > video.videoHeight) {
+                maxSourceHeight = video.videoHeight;
+                maxSourceWidth = maxSourceHeight * videoRatio;
+            }
+
+            // 根據動態補間的縮放比例，決定要取樣的區塊大小
+            const sw = maxSourceWidth / currentScale;
+            const sh = maxSourceHeight / currentScale;
+
+            // 根據動態補間的取樣比例，決定左上角的裁切起點 (確保裁切框不會超出影片本體)
+            const sx = currentRx * (video.videoWidth - sw);
+            const sy = currentRy * (video.videoHeight - sh);
+
+            // 3. 繪製影像
+            ctx.drawImage(video, sx, sy, sw, sh, -destW/2, -destH/2, destW, destH);
+
+            ctx.restore();
+        }
+    </script>
+</body>
+</html>
