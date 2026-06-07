@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v3.4</title>
+    <title>compoundEye | v4.0</title>
     <style>
         body, html {
             margin: 0;
@@ -210,13 +210,13 @@
             };
         }
 
-        // 新增：取得指定狀態的顏色 (色相推移與隨機範圍)
+        // 定義取得指定狀態顏色的邏輯 (推移色相與計算彩度)
         function getCellColor(col, row, state) {
             function hash(c, r, s, comp) {
                 let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
                 return h - Math.floor(h);
             }
-            // 每次 state 增加，基礎色相推移 30 度
+            // 每次點擊 (state增加) 推移 30 度的基礎色相
             let baseHue = state * 30; 
             // 在該基礎色相上，加上 0~30 度的隨機偏移
             let hue = baseHue + hash(col, row, state, 4) * 30; 
@@ -279,7 +279,7 @@
             let S_current = baseS * currentGridScale;
             let H_current = S_current * Math.sqrt(3) / 2;
             
-            // 使用黑色清空畫布，避免 multiply 疊加異常
+            // 使用黑色清空畫布
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -312,6 +312,8 @@
             const cy = row * H_current + (isUp ? H_current * (2/3) : H_current * (1/3));
             ctx.save();
             let maxDistX = 0; let maxDistY = 0;
+            
+            // 建立三角形路徑
             ctx.beginPath();
             for (let i = 0; i < vertices.length; i++) {
                 const idealVx = vertices[i].x; const idealVy = vertices[i].y;
@@ -335,17 +337,7 @@
             }
             ctx.closePath(); 
             
-            // --- 新增：顏色 Easing 與填色 ---
-            const prevColor = getCellColor(col, row, prevState);
-            const targetColor = getCellColor(col, row, targetState);
-            const currentHue = prevColor.hue + (targetColor.hue - prevColor.hue) * t;
-            const currentSat = prevColor.sat + (targetColor.sat - prevColor.sat) * t;
-            
-            // HSL 系統中 Lightness 設定為 50% 等同於 HSB 中最亮最純的顏色 (100% 明度)
-            ctx.fillStyle = `hsl(${currentHue}, ${currentSat}%, 50%)`;
-            ctx.fill();
-            
-            // 裁切並轉換座標空間以繪製影片
+            // 裁切繪製範圍並轉移基準點
             ctx.clip(); 
             ctx.translate(cx, cy);
             
@@ -364,19 +356,34 @@
             let maxSourceHeight = maxSourceWidth / videoRatio;
             if (maxSourceHeight > video.videoHeight) { maxSourceHeight = video.videoHeight; maxSourceWidth = maxSourceHeight * videoRatio; }
             
-            // --- 新增：灰階濾鏡與相乘疊加模式 ---
-            ctx.globalCompositeOperation = 'multiply';
-            ctx.filter = 'grayscale(100%)';
-
+            // --- 步驟 1：先繪製灰階相機畫面 ---
+            ctx.globalCompositeOperation = 'source-over'; // 確保為正常模式覆蓋
+            ctx.filter = 'grayscale(100%)';               // 開啟灰階濾鏡
+            
             ctx.drawImage(video, currentRx * (video.videoWidth - maxSourceWidth / currentScale), currentRy * (video.videoHeight - maxSourceHeight / currentScale), maxSourceWidth / currentScale, maxSourceHeight / currentScale, -destW/2, -destH/2, destW, destH);
             
-            // 繪製完畢後重置，以免影響到閃光效果
-            ctx.filter = 'none';
-            ctx.globalCompositeOperation = 'source-over';
-
+            // --- 步驟 2：利用 multiply 疊加顏色 ---
+            ctx.filter = 'none';                         // 關閉濾鏡
+            ctx.globalCompositeOperation = 'multiply';   // 開啟相乘混合模式
+            
+            // 計算顏色的 Easing 內插
+            const prevColor = getCellColor(col, row, prevState);
+            const targetColor = getCellColor(col, row, targetState);
+            const currentHue = prevColor.hue + (targetColor.hue - prevColor.hue) * t;
+            const currentSat = prevColor.sat + (targetColor.sat - prevColor.sat) * t;
+            
+            ctx.fillStyle = `hsl(${currentHue}, ${currentSat}%, 50%)`;
+            // 利用 fillRect 直接覆蓋剛剛的區域 (因為已經被 ctx.clip 裁切成三角形了)
+            ctx.fillRect(-destW/2, -destH/2, destW, destH);
+            
+            // --- 步驟 3：繪製閃光效果 ---
+            ctx.globalCompositeOperation = 'source-over'; // 重置為正常模式
             if (flashManager.active && flashManager.active.col === col && flashManager.active.row === row && flashManager.active.isOn) {
-                ctx.fillStyle = '#ffffff'; ctx.fillRect(-destW/2, -destH/2, destW, destH);
+                ctx.fillStyle = '#ffffff'; 
+                ctx.fillRect(-destW/2, -destH/2, destW, destH);
             }
+            
+            // ctx.restore() 會清除掉剛剛設定的 clip、translate 與 globalCompositeOperation
             ctx.restore();
         }
     </script>
