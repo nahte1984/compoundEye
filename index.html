@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>鏡頭無縫拼貼互動</title>
+    <title>compoundEYE | v1.1</title>
     <style>
         body, html {
             margin: 0;
@@ -92,27 +92,19 @@
         const ctx = canvas.getContext('2d');
         const video = document.getElementById('video');
 
-        // 網格偏移量與動畫狀態
-        let currentGridOffsetX = 0;
-        let currentGridOffsetY = 0;
-        let prevGridOffsetX = 0;
-        let prevGridOffsetY = 0;
-        let targetGridOffsetX = 0;
-        let targetGridOffsetY = 0;
-
+        // 動畫狀態
         let animProgress = 1;
         let prevState = 0;
         let targetState = 0;
 
-        // 正六邊形設定 (確保無縫鋪滿)
-        // 寬度大約 200px -> 半徑 100px (平頂六邊形 Width = 2 * R)
-        const R = 100; 
-        const W = 2 * R; // 200
-        const H = Math.sqrt(3) * R; // 約 173.2
+        // 正六邊形設定 (動態響應式)
+        let R = 100; 
+        let W = 2 * R; // 200
+        let H = Math.sqrt(3) * R; // 約 173.2
 
         // 網格間距
-        const xOffset = 1.5 * R;
-        const yOffset = H;
+        let xOffset = 1.5 * R;
+        let yOffset = H;
 
         // Easing 函數 (easeInOutCubic) 讓動畫平滑
         function easeInOutCubic(x) {
@@ -123,6 +115,13 @@
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+
+            // 響應式：手機版 (寬度小於 768px) 六邊形縮小到 25% (R = 25)
+            R = window.innerWidth < 768 ? 25 : 100;
+            W = 2 * R;
+            H = Math.sqrt(3) * R;
+            xOffset = 1.5 * R;
+            yOffset = H;
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
@@ -133,14 +132,15 @@
             
             // 利用座標與狀態產生隨機種子
             function hash(seedX, seedY, s, comp) {
+                // 使用不同的常數來產生獨立的雜湊值
                 let h = Math.sin(seedX * 12.9898 + seedY * 78.233 + s * 37.719 + comp * 19.51) * 43758.5453;
                 return h - Math.floor(h);
             }
             
-            // 為了確保不規則六邊形的所有內角都不會大於180度（保持嚴格的凸多邊形），
-            // 我們必須限制頂點的隨機偏移半徑。對正六邊形而言，偏移量設定為半徑的 25% (0.25)
-            // 可以從幾何學上絕對保證邊線不會反摺交錯，且所有內角皆小於等於 180 度。
-            const maxOffset = R * 0.25; 
+            // 為了達到最大與最小面積相差 6 倍的反差，將偏移極限提升至 0.42 * R。
+            // (最巨型半徑約 1.42R，最微型半徑約 0.58R，面積比 1.42^2 / 0.58^2 ≈ 5.99 倍)
+            // 這將創造非常激烈的變形效果，並維持無縫拼接。
+            const maxOffset = R * 0.42; 
             let rx = hash(idX, idY, state, 1) * 2 - 1;
             let ry = hash(idX, idY, state, 2) * 2 - 1;
             
@@ -194,12 +194,7 @@
             prevState = targetState;
             targetState++;
             
-            prevGridOffsetX = currentGridOffsetX;
-            prevGridOffsetY = currentGridOffsetY;
-            
-            // 隨機偏移整面網格
-            targetGridOffsetX = prevGridOffsetX + (Math.random() - 0.5) * 1000;
-            targetGridOffsetY = prevGridOffsetY + (Math.random() - 0.5) * 1000;
+            // 移除全域偏移量改變，讓六邊形在原地進行造型改變，取消平移效果
             
             animProgress = 0; // 重置動畫進度，觸發 easing
         });
@@ -218,17 +213,15 @@
             }
             
             let t = easeInOutCubic(animProgress);
-            currentGridOffsetX = prevGridOffsetX + (targetGridOffsetX - prevGridOffsetX) * t;
-            currentGridOffsetY = prevGridOffsetY + (targetGridOffsetY - prevGridOffsetY) * t;
 
             // 清空畫布
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 計算當前畫面可見的網格行列範圍 (加寬範圍以涵蓋變形與移動後的網格邊緣)
-            const startCol = Math.floor((-currentGridOffsetX - W) / xOffset) - 1;
-            const endCol = Math.floor((canvas.width - currentGridOffsetX + W) / xOffset) + 1;
-            const startRow = Math.floor((-currentGridOffsetY - H) / yOffset) - 2;
-            const endRow = Math.floor((canvas.height - currentGridOffsetY + H) / yOffset) + 2;
+            // 計算當前畫面可見的網格行列範圍 (移除全域偏移)
+            const startCol = Math.floor((-W) / xOffset) - 1;
+            const endCol = Math.floor((canvas.width + W) / xOffset) + 1;
+            const startRow = Math.floor((-H) / yOffset) - 2;
+            const endRow = Math.floor((canvas.height + H) / yOffset) + 2;
 
             // 繪製每一個可見的六邊形
             for (let col = startCol; col <= endCol; col++) {
@@ -243,8 +236,8 @@
 
         function drawCell(col, row, t) {
             const isOddCol = Math.abs(col % 2) === 1;
-            const cx_actual = col * xOffset + currentGridOffsetX;
-            const cy_actual = row * yOffset + (isOddCol ? H / 2 : 0) + currentGridOffsetY;
+            const cx_actual = col * xOffset;
+            const cy_actual = row * yOffset + (isOddCol ? H / 2 : 0);
 
             ctx.save();
 
@@ -252,11 +245,11 @@
             ctx.beginPath();
             for (let i = 0; i < 6; i++) {
                 const angle = i * Math.PI / 3; 
-                // 網格理想基準座標 (未包含整體偏移)
+                // 網格理想基準座標
                 const idealVx = col * xOffset + R * Math.cos(angle);
                 const idealVy = row * yOffset + (isOddCol ? H / 2 : 0) + R * Math.sin(angle);
                 
-                // 利用四捨五入取得該頂點的唯一 ID (確保相鄰六邊形的共用頂點 ID 相同)
+                // 利用四捨五入取得該頂點的唯一 ID
                 const idX = Math.round(idealVx);
                 const idY = Math.round(idealVy);
                 
@@ -266,9 +259,9 @@
                 const currentOffX = prevOff.x + (targetOff.x - prevOff.x) * t;
                 const currentOffY = prevOff.y + (targetOff.y - prevOff.y) * t;
                 
-                // 計算最終頂點實際座標
-                let vx = idealVx + currentGridOffsetX + currentOffX;
-                let vy = idealVy + currentGridOffsetY + currentOffY;
+                // 計算最終頂點實際座標 (移除全域偏移)
+                let vx = idealVx + currentOffX;
+                let vy = idealVy + currentOffY;
 
                 // 修正 sub-pixel 產生的細線：將頂點沿著法向量向外微幅擴張 (Overlap)
                 let dx = vx - cx_actual;
