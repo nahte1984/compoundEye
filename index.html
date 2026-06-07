@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v4.5</title>
+    <title>compoundEye | v4.7</title>
     <style>
         body, html {
             margin: 0;
@@ -112,6 +112,7 @@
 
         let baseS = 180;
         const initialHueOffset = Math.random() * 360;
+        const globalSeed = Math.random() * 10000; // 新增全域隨機種子
 
         const flashManager = {
             queue: [],
@@ -187,7 +188,8 @@
         function getVertexOffset(idX, idY, state, baseSize) {
             if (state === 0) return { x: 0, y: 0 };
             function hash(seedX, seedY, s, comp) {
-                let h = Math.sin(seedX * 12.9898 + seedY * 78.233 + s * 37.719 + comp * 19.51) * 43758.5453;
+                // 將 globalSeed 加入數學算式中，打亂每次重整頁面的初始結果
+                let h = Math.sin(seedX * 12.9898 + seedY * 78.233 + s * 37.719 + comp * 19.51 + globalSeed) * 43758.5453;
                 return h - Math.floor(h);
             }
             const maxOffset = baseSize * 0.42;
@@ -211,7 +213,8 @@
 
         function getCellContent(col, row, state) {
             function hash(c, r, s, comp) {
-                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
+                // 將 globalSeed 加入數學算式中
+                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719 + globalSeed) * 43758.5453;
                 return h - Math.floor(h);
             }
             return {
@@ -223,10 +226,12 @@
 
         function getCellColor(col, row, state) {
             function hash(c, r, s, comp) {
-                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
+                // 將 globalSeed 加入數學算式中
+                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719 + globalSeed) * 43758.5453;
                 return h - Math.floor(h);
             }
-            let baseHue = (initialHueOffset + state * 35) % 360; 
+            // 移除 % 360，讓數值無限加上去，確保色相漸變永遠是「往前轉 35 度」，避免色彩倒轉閃爍
+            let baseHue = initialHueOffset + state * 35; 
             let hue = baseHue + hash(col, row, state, 4) * 35; 
             let sat = 80 + hash(col, row, state, 5) * 20; 
             return { hue, sat };
