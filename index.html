@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>compoundEye | v1.4</title>
+    <title>compoundEye | v2.0</title>
     <style>
         body, html {
             margin: 0;
@@ -101,7 +101,7 @@
         let targetGridScale = 1;
         let currentGridScale = 1;
 
-        // 基礎正六邊形設定 (改為基礎變數，後續會隨縮放倍率動態改變)
+        // 基礎八邊形網格設定 (baseR 為八邊形外接正方形的半徑)
         let baseR = 100;
 
         // Easing 函數 (easeInOutCubic) 讓動畫平滑
@@ -114,7 +114,7 @@
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
 
-            // 響應式：手機版 (寬度小於 768px) 基準六邊形縮小到 50%
+            // 響應式：手機版縮小到 50%
             baseR = window.innerWidth < 768 ? 50 : 100;
         }
         window.addEventListener('resize', resizeCanvas);
@@ -129,34 +129,31 @@
                 return h - Math.floor(h);
             }
             
-            // 絕對安全的極限偏移值，保證多邊形永遠是凸的
+            // 絕對安全的極限偏移值，保證多邊形永遠是凸的 (頂點不會交叉)
             const maxOffset = baseRadius * 0.25; 
 
             // 取一個抽象坐標系中的「引力中心」
-            let focusX = hash(1, 1, state, 10) * 2000;
-            let focusY = hash(1, 1, state, 11) * 2000;
+            let focusX = hash(1, 1, state, 10) * window.innerWidth;
+            let focusY = hash(1, 1, state, 11) * window.innerHeight;
 
             let dx = idX - focusX;
             let dy = idY - focusY;
             let dist = Math.hypot(dx, dy) + 0.001; 
 
-            // 取得由中心向外的放射狀方向
             let dirX = dx / dist;
             let dirY = dy / dist;
 
-            // 利用 cos 函數製造「漣漪效應」
+            // 漣漪效應
             let wave = Math.cos((dist - baseRadius) / (2 * baseRadius) * Math.PI);
 
             // 加入微量雜訊
             let nx = hash(idX, idY, state, 1) * 2 - 1;
             let ny = hash(idX, idY, state, 2) * 2 - 1;
 
-            // 混合波浪與雜訊 
             let pushX = dirX * wave * 0.8 + nx * 0.2;
             let pushY = dirY * wave * 0.8 + ny * 0.2;
 
             let currentMag = Math.hypot(pushX, pushY) + 0.001;
-            
             let scale = Math.min(currentMag, 1.0); 
             if (Math.abs(wave) > 0.5) scale = 1.0; 
 
@@ -166,13 +163,12 @@
             };
         }
 
-        // 取得每個格子的內容屬性 (縮放倍率、取樣位置X比例、取樣位置Y比例)
-        function getCellContent(col, row, state) {
+        // 取得每個格子的內容屬性 (加入 typeOffset 區分八邊形與正方形的隨機內容)
+        function getCellContent(col, row, state, typeOffset = 0) {
             function hash(c, r, s, comp) {
-                let h = Math.sin(c * 53.123 + r * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
+                let h = Math.sin((c + typeOffset) * 53.123 + (r + typeOffset) * 12.9898 + s * 78.233 + comp * 37.719) * 43758.5453;
                 return h - Math.floor(h);
             }
-            
             return {
                 scale: 1 + hash(col, row, state, 1) * 6, // 縮放 1 ~ 7倍
                 rx: hash(col, row, state, 2),          
@@ -204,18 +200,17 @@
             }
         });
 
-        // 點擊畫面任意處隨機偏移網格，並隨機巨幅改變畫面網格縮放
+        // 點擊變形與縮放
         canvas.addEventListener('click', () => {
             prevState = targetState;
             targetState++;
             
             prevGridScale = targetGridScale;
-            // 要求：面積隨機從 1 ~ 6 倍放大縮小。
-            // 數學換算：面積 = 半徑的平方，所以半徑縮放比例為 √1 ~ √6
+            // 面積隨機從 1 ~ 6 倍放大縮小 (半徑縮放比例為 √1 ~ √6)
             let targetAreaScale = 1 + Math.random() * 5; 
             targetGridScale = Math.sqrt(targetAreaScale);
 
-            animProgress = 0; // 重置動畫進度，觸發 easing
+            animProgress = 0; // 重置動畫進度
         });
 
         // 主要繪圖迴圈
@@ -225,98 +220,137 @@
                 return;
             }
 
-            // 更新動畫進度
             if (animProgress < 1) {
                 animProgress += 0.02; 
                 if (animProgress > 1) animProgress = 1;
             }
             
             let t = easeInOutCubic(animProgress);
-
-            // 計算當前的動態縮放比例
             currentGridScale = prevGridScale + (targetGridScale - prevGridScale) * t;
 
-            // 尖角在上的六邊形尺寸計算 (套用動態縮放)
-            // 尖角在上的網格特性：寬度為 √3 * R，高度為 2 * R
-            let R_current = baseR * currentGridScale;
-            let W_current = Math.sqrt(3) * R_current;
-            let H_current = 2 * R_current;
-            let xOffset = W_current;
-            let yOffset = 1.5 * R_current;
+            // 網格尺寸計算：以正方形網格 (S) 為基礎排列八邊形
+            let S_current = 2 * baseR * currentGridScale;
 
-            // 清空畫布
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 計算可見網格範圍 (尖角在上模式)
-            const startCol = Math.floor((-W_current) / xOffset) - 2;
-            const endCol = Math.floor((canvas.width + W_current) / xOffset) + 2;
-            const startRow = Math.floor((-H_current) / yOffset) - 2;
-            const endRow = Math.floor((canvas.height + H_current) / yOffset) + 2;
+            const startCol = Math.floor((-S_current) / S_current) - 2;
+            const endCol = Math.floor((canvas.width + S_current) / S_current) + 2;
+            const startRow = Math.floor((-S_current) / S_current) - 2;
+            const endRow = Math.floor((canvas.height + S_current) / S_current) + 2;
 
-            // 繪製每一個可見的六邊形
+            // 雙重繪製：在每個網格點畫一個八邊形，以及網格縫隙的連接正方形
             for (let col = startCol; col <= endCol; col++) {
                 for (let row = startRow; row <= endRow; row++) {
-                    drawCell(col, row, t, R_current, W_current, H_current, xOffset, yOffset);
+                    const cx_oct = col * S_current;
+                    const cy_oct = row * S_current;
+                    drawShape(col, row, 'octagon', cx_oct, cy_oct, t, currentGridScale, S_current);
+
+                    const cx_sq = col * S_current + S_current / 2;
+                    const cy_sq = row * S_current + S_current / 2;
+                    drawShape(col, row, 'square', cx_sq, cy_sq, t, currentGridScale, S_current);
                 }
             }
 
             requestAnimationFrame(drawLoop);
         }
 
-        function drawCell(col, row, t, R_current, W_current, H_current, xOffset, yOffset) {
-            // 尖角在上的六邊形，奇數「列 (row)」要向右偏移半格
-            const isOddRow = Math.abs(row % 2) === 1;
-            
-            // 基礎無縮放的理想座標 (用於產生穩定且不隨縮放改變的頂點 Hash ID)
-            const baseW = Math.sqrt(3) * baseR;
-            const baseXOffset = baseW;
-            const baseYOffset = 1.5 * baseR;
-            const baseCx = col * baseXOffset + (isOddRow ? baseXOffset / 2 : 0);
-            const baseCy = row * baseYOffset;
+        // 統一繪製多邊形的方法 (八邊形與正方形共用同一套變形力場)
+        function drawShape(col, row, type, cx, cy, t, currentGridScale, S_current) {
+            // 八邊形幾何常數 (Truncated Square Tiling)
+            const r_current = S_current / (2 * (1 + Math.SQRT2));
+            const R_curr = S_current / 2;
+            const d = R_curr - r_current;
 
-            // 當前實際繪製的中心座標 (包含縮放偏移)
-            const cx_actual = col * xOffset + (isOddRow ? xOffset / 2 : 0);
-            const cy_actual = row * yOffset;
+            let vertices = [];
+            let typeOffset = 0; // 用於區分同座標的八邊形和正方形的隨機取樣內容
+
+            if (type === 'octagon') {
+                vertices = [
+                    {x: cx + R_curr, y: cy + r_current},
+                    {x: cx + r_current, y: cy + R_curr},
+                    {x: cx - r_current, y: cy + R_curr},
+                    {x: cx - R_curr, y: cy + r_current},
+                    {x: cx - R_curr, y: cy - r_current},
+                    {x: cx - r_current, y: cy - R_curr},
+                    {x: cx + r_current, y: cy - R_curr},
+                    {x: cx + R_curr, y: cy - r_current}
+                ];
+                typeOffset = 0;
+            } else {
+                vertices = [
+                    {x: cx, y: cy - d},    // Top
+                    {x: cx + d, y: cy},    // Right
+                    {x: cx, y: cy + d},    // Bottom
+                    {x: cx - d, y: cy}     // Left
+                ];
+                typeOffset = 0.5;
+            }
 
             ctx.save();
-
             let maxDistX = 0;
             let maxDistY = 0;
 
-            // 1. 繪製變形六邊形路徑並設定為剪裁範圍
+            // 繪製路徑
             ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
-                // 尖角在上的頂點角度 (-90度起算：-90, -30, 30, 90, 150, 210)
-                const angle = -Math.PI / 2 + i * Math.PI / 3; 
-                
-                // 用無縮放的座標產生唯一頂點 ID
-                const baseVx = baseCx + baseR * Math.cos(angle);
-                const baseVy = baseCy + baseR * Math.sin(angle);
-                const idX = Math.round(baseVx);
-                const idY = Math.round(baseVy);
-                
-                // 取得基礎偏移量 (保證凸多邊形的極限 25%)
+            for (let i = 0; i < vertices.length; i++) {
+                const idealVx = vertices[i].x;
+                const idealVy = vertices[i].y;
+
+                // 產生不隨畫面縮放改變的純淨基準點，確保縮放時共用頂點不會破裂
+                const baseS = baseR * 2;
+                const base_r = baseS / (2 * (1 + Math.SQRT2));
+                const base_R = baseS / 2;
+                const base_d = base_R - base_r;
+
+                const baseCx = col * baseS + (type === 'square' ? baseS / 2 : 0);
+                const baseCy = row * baseS + (type === 'square' ? baseS / 2 : 0);
+
+                let baseIdealVx, baseIdealVy;
+                if (type === 'octagon') {
+                    const base_oct_v = [
+                        {x: baseCx + base_R, y: baseCy + base_r},
+                        {x: baseCx + base_r, y: baseCy + base_R},
+                        {x: baseCx - base_r, y: baseCy + base_R},
+                        {x: baseCx - base_R, y: baseCy + base_r},
+                        {x: baseCx - base_R, y: baseCy - base_r},
+                        {x: baseCx - base_r, y: baseCy - base_R},
+                        {x: baseCx + base_r, y: baseCy - base_R},
+                        {x: baseCx + base_R, y: baseCy - base_r}
+                    ];
+                    baseIdealVx = base_oct_v[i].x;
+                    baseIdealVy = base_oct_v[i].y;
+                } else {
+                    const base_sq_v = [
+                        {x: baseCx, y: baseCy - base_d},
+                        {x: baseCx + base_d, y: baseCy},
+                        {x: baseCx, y: baseCy + base_d},
+                        {x: baseCx - base_d, y: baseCy}
+                    ];
+                    baseIdealVx = base_sq_v[i].x;
+                    baseIdealVy = base_sq_v[i].y;
+                }
+
+                const idX = Math.round(baseIdealVx);
+                const idY = Math.round(baseIdealVy);
+
+                // 補間變形
                 const prevOff = getVertexOffset(idX, idY, prevState, baseR);
                 const targetOff = getVertexOffset(idX, idY, targetState, baseR);
                 const baseOffX = prevOff.x + (targetOff.x - prevOff.x) * t;
                 const baseOffY = prevOff.y + (targetOff.y - prevOff.y) * t;
-                
-                // 將極限偏移量乘上當前的整體網格縮放比例，確保縮放時比例不失真
+
                 const currentOffX = baseOffX * currentGridScale;
                 const currentOffY = baseOffY * currentGridScale;
 
-                // 計算最終頂點實際螢幕座標
-                const idealVx = cx_actual + R_current * Math.cos(angle);
-                const idealVy = cy_actual + R_current * Math.sin(angle);
                 let vx = idealVx + currentOffX;
                 let vy = idealVy + currentOffY;
 
-                maxDistX = Math.max(maxDistX, Math.abs(vx - cx_actual));
-                maxDistY = Math.max(maxDistY, Math.abs(vy - cy_actual));
+                maxDistX = Math.max(maxDistX, Math.abs(vx - cx));
+                maxDistY = Math.max(maxDistY, Math.abs(vy - cy));
 
-                // 修正 sub-pixel 產生的細線：將頂點沿著法向量向外微幅擴張
-                let dx = vx - cx_actual;
-                let dy = vy - cy_actual;
+                // 擴張 1.0 像素修補反鋸齒白線
+                let dx = vx - cx;
+                let dy = vy - cy;
                 let dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > 0) {
                     vx += (dx / dist) * 1.0; 
@@ -328,20 +362,19 @@
             ctx.closePath();
             ctx.clip(); 
 
-            // 移動畫布中心到此格
-            ctx.translate(cx_actual, cy_actual);
+            ctx.translate(cx, cy);
 
-            // 取得前後狀態的內容參數並進行 Interpolation
-            const prevContent = getCellContent(col, row, prevState);
-            const targetContent = getCellContent(col, row, targetState);
+            const prevContent = getCellContent(col, row, prevState, typeOffset);
+            const targetContent = getCellContent(col, row, targetState, typeOffset);
             
             const currentScale = prevContent.scale + (targetContent.scale - prevContent.scale) * t;
             const currentRx = prevContent.rx + (targetContent.rx - prevContent.rx) * t;
             const currentRy = prevContent.ry + (targetContent.ry - prevContent.ry) * t;
 
-            // 2. 計算影片來源裁切尺寸 
-            const destW = Math.max(W_current * 1.8, maxDistX * 2.2);
-            const destH = Math.max(H_current * 1.8, maxDistY * 2.2);
+            const baseW = S_current;
+            const baseH = S_current;
+            const destW = Math.max(baseW * 1.8, maxDistX * 2.2);
+            const destH = Math.max(baseH * 1.8, maxDistY * 2.2);
             const videoRatio = destW / destH;
             
             let maxSourceWidth = video.videoWidth;
@@ -358,7 +391,6 @@
             const sx = currentRx * (video.videoWidth - sw);
             const sy = currentRy * (video.videoHeight - sh);
 
-            // 3. 繪製影像
             ctx.drawImage(video, sx, sy, sw, sh, -destW/2, -destH/2, destW, destH);
 
             ctx.restore();
